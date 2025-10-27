@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>三角形の五心 インタラクティブ（傍心修正版）</title>
+<style>
+body{font-family:system-ui,-apple-system,"Helvetica Neue",Arial;margin:12px;background:#f7f7fb;color:#111}
+h1{font-size:18px;margin:0 0 8px}
+#wrap{display:flex;gap:12px}
+#canvasWrap{background:#fff;border:1px solid #ddd;padding:10px;border-radius:8px}
+svg{width:720px;height:540px;background:linear-gradient(#fff,#fbfdff);touch-action:none}
+.controls{max-width:300px}
+.controls .row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+button{padding:6px 10px;border-radius:6px;border:1px solid #bbb;background:#fff;cursor:pointer}
+button.active{background:#333;color:#fff}
+.note{font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>三角形の五心（傍心作図線手順表示）</h1>
+<p class="note">頂点 A,B,C をドラッグで移動できます。五心のボタンで表示、作図線ボタンで順序通り作図線を表示できます。傍心は「1つの頂点の内角二等分線 → 別の頂点の外角二等分線」の順序です。</p>
+
+<div id="wrap">
+  <div id="canvasWrap">
+    <svg id="svg" viewBox="0 0 720 540" xmlns="http://www.w3.org/2000/svg" aria-label="三角形の五心インタラクティブ"></svg>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button id="btn-O">外心 (O)</button>
+      <button id="btn-I">内心 (I)</button>
+      <button id="btn-G">重心 (G)</button>
+      <button id="btn-H">垂心 (H)</button>
+      <button id="btn-J">傍心 (J_A)</button>
+      <button id="btn-all">全表示</button>
+    </div>
+
+    <div class="row">
+      <button id="cons-O">外心作図線</button>
+      <button id="cons-I">内心作図線</button>
+      <button id="cons-G">重心作図線</button>
+      <button id="cons-H">垂心作図線</button>
+      <button id="cons-J">傍心作図線</button>
+    </div>
+
+    <div class="row">
+      <button id="reset">初期位置に戻す</button>
+    </div>
+
+    <div id="info" class="note"></div>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const W = 720, H = 540;
+
+const pts = { A:{x:140,y:120}, B:{x:540,y:140}, C:{x:300,y:420} };
+const show = {O:false,I:false,G:false,H:false,J:false};
+const cons = {O:false,I:false,G:false,H:false,J:false};
+
+function createSVG(tag, attrs={}){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const k in attrs) e.setAttribute(k,attrs[k]);return e;}
+function lineFromPoints(p,q){const a=q.y-p.y; const b=p.x-q.x; const c=-(a*p.x + b*p.y); return {a,b,c};}
+function lineFromPointDir(p,dir){const a=-dir.y,b=dir.x,c=-(a*p.x+b*p.y); return {a,b,c};}
+function intersectLine(l1,l2){const D=l1.a*l2.b - l2.a*l1.b; if(Math.abs(D)<1e-9) return null; const x=(l1.b*l2.c-l2.b*l1.c)/D; const y=(l2.a*l1.c-l1.a*l2.c)/D; return {x,y};}
+function normalize(v){const m=Math.hypot(v.x,v.y); return {x:v.x/m,y:v.y/m};}
+function add(p,q){return {x:p.x+q.x,y:p.y+q.y};}
+function sub(p,q){return {x:p.x-q.x,y:p.y-q.y};}
+function mul(p,s){return {x:p.x*s,y:p.y*s};}
+
+function clipLineToBox(line){
+  const pts=[]; 
+  if(Math.abs(line.b)>1e-9){ let y=-line.c/line.b; if(y>=-5 && y<=H+5) pts.push({x:0,y}); y=-(line.a*W+line.c)/line.b; if(y>=-5 && y<=H+5) pts.push({x:W,y}); }
+  if(Math.abs(line.a)>1e-9){ let x=-line.c/line.a; if(x>=-5 && x<=W+5) pts.push({x,y:0}); x=-(line.b*H+line.c)/line.a; if(x>=-5 && x<=W+5) pts.push({x,y:H}); }
+  const uniq=[]; for(const p of pts){ if(!uniq.some(q=>Math.hypot(q.x-p.x,p.y-q.y)<1e-6)) uniq.push(p);}
+  if(uniq.length<2) return null;
+  let p1=uniq[0],p2=uniq[1],maxd=0;
+  for(let i=0;i<uniq.length;i++) for(let j=i+1;j<uniq.length;j++){const d=Math.hypot(uniq[i].x-uniq[j].x,uniq[i].y-uniq[j].y); if(d>maxd){maxd=d;p1=uniq[i];p2=uniq[j];}}
+  return [p1,p2];
+}
+
+function midpoint(p,q){return {x:(p.x+q.x)/2,y:(p.y+q.y)/2};}
+function drawSegment(p,q,color){ const l=createSVG('line',{x1:p.x,y1:p.y,x2:q.x,y2:q.y,stroke:color,'stroke-dasharray':'6 4'}); svg.appendChild(l);}
+function drawPointLabel(p,label,color){ if(!p) return; svg.appendChild(createSVG('circle',{cx:p.x,cy:p.y,r:6,fill:color,stroke:'#222'})); const t=createSVG('text',{x:p.x+10,y:p.y+6,'font-size':12}); t.textContent=label; svg.appendChild(t);}
+
+function angleBisectorLine(P,Q,R,internal=true){
+  const v1=normalize({x:P.x-Q.x,y:P.y-Q.y});
+  const v2=normalize({x:R.x-Q.x,y:R.y-Q.y});
+  let dir = internal? add(v1,v2) : sub(v1,v2);
+  if(Math.hypot(dir.x,dir.y)<1e-9) dir={x:-(Q.y-P.y),y:Q.x-P.x};
+  return lineFromPointDir(Q,dir);
+}
+
+function computeCenters(){
+  const A=pts.A,B=pts.B,C=pts.C;
+  const G={x:(A.x+B.x+C.x)/3, y:(A.y+B.y+C.y)/3};
+
+  // 外心
+  const pb1=lineFromPoints(A,B),pb2=lineFromPoints(B,C);
+  const pbl1={a:pb1.b,b:-pb1.a,c:-(pb1.b*(A.x+B.x)/2 - pb1.a*(A.y+B.y)/2)};
+  const pbl2={a:pb2.b,b:-pb2.a,c:-(pb2.b*(B.x+C.x)/2 - pb2.a*(B.y+C.y)/2)};
+  const O=intersectLine(pbl1,pbl2);
+
+  // 内心
+  const bisA=angleBisectorLine(B,A,C,true);
+  const bisB=angleBisectorLine(A,B,C,true);
+  const I=bisA&&bisB?intersectLine(bisA,bisB):null;
+
+  // 傍心 J_A（作図手順: Aの内角二等分線 → Bの外角二等分線）
+  const bisA_int = angleBisectorLine(B,A,C,true);   // 内角
+  const bisB_ext = angleBisectorLine(A,B,C,false);  // 外角
+  const J = intersectLine(bisA_int, bisB_ext);
+
+  // 垂心
+  const dirA={x:B.y-C.y,y:C.x-B.x};
+  const altA=lineFromPointDir(A,dirA);
+  const dirB={x:A.y-C.y,y:C.x-A.x};
+  const altB=lineFromPointDir(B,dirB);
+  const dirC={x:A.y-B.y,y:B.x-A.x};
+  const altC=lineFromPointDir(C,dirC);
+  const H=intersectLine(altA,altB);
+
+  return {G,I,O,H,J,altA,altB,altC,bisA_int,bisB_ext};
+}
+
+function drawLineCoeffs(line,color){ const seg=clipLineToBox(line); if(!seg) return; const L=createSVG('line',{x1:seg[0].x,y1:seg[0].y,x2:seg[1].x,y2:seg[1].y,stroke:color,'stroke-width':1,'stroke-dasharray':'6 4'}); svg.appendChild(L); }
+
+function render(){
+  svg.innerHTML='';
+  // グリッド
+  const gGrid=createSVG('g');
+  for(let x=0;x<=W;x+=40) gGrid.appendChild(createSVG('line',{x1:x,y1:0,x2:x,y2:H,stroke:'#eee'}));
+  for(let y=0;y<=H;y+=40) gGrid.appendChild(createSVG('line',{x1:0,y1:y,x2:W,y2:y,stroke:'#eee'}));
+  svg.appendChild(gGrid);
+
+  // 三角形
+  const tri=createSVG('polygon',{points:`${pts.A.x},${pts.A.y} ${pts.B.x},${pts.B.y} ${pts.C.x},${pts.C.y}`,fill:'#fff8e6',stroke:'#333','stroke-width':2});
+  svg.appendChild(tri);
+
+  const c=computeCenters();
+
+  // 作図線描画
+  if(cons.O){ /* 外心作図線（必要なら中点垂直二等分線を描画） */ }
+  if(cons.I){ drawLineCoeffs(angleBisectorLine(pts.B,pts.A,pts.C,true),'#d62728'); drawLineCoeffs(angleBisectorLine(pts.A,pts.B,pts.C,true),'#d62728'); }
+  if(cons.G){ drawSegment(pts.A,midpoint(pts.B,pts.C),'#2ca02c'); drawSegment(pts.B,midpoint(pts.A,pts.C),'#2ca02c'); drawSegment(pts.C,midpoint(pts.A,pts.B),'#2ca02c'); }
+  if(cons.H){ drawLineCoeffs(c.altA,'#ff7f0e'); drawLineCoeffs(c.altB,'#ff7f0e'); drawLineCoeffs(c.altC,'#ff7f0e'); }
+  if(cons.J){ drawLineCoeffs(c.bisA_int,'#9467bd'); drawLineCoeffs(c.bisB_ext,'#9467bd'); }
+
+  // 五心表示
+  if(show.O && c.O){ drawPointLabel(c.O,'O','#1f77b4'); }
+  if(show.I && c.I){ drawPointLabel(c.I,'I','#d62728'); }
+  if(show.G && c.G){ drawPointLabel(c.G,'G','#2ca02c'); }
+  if(show.H && c.H){ drawPointLabel(c.H,'H','#ff7f0e'); }
+  if(show.J && c.J){ drawPointLabel(c.J,'J_A','#9467bd'); }
+
+  // 頂点描画
+  for(const k of ['A','B','C']){
+    const p=pts[k]; const g=createSVG('g'); const c1=createSVG('circle',{cx:p.x,cy:p.y,r:8,fill:'#fff',stroke:'#333','stroke-width':2}); g.appendChild(c1);
+    const t=createSVG('text',{x:p.x+12,y:p.y+6,'font-size':14}); t.textContent=k; g.appendChild(t); svg.appendChild(g);
+  }
+
+  document.getElementById('info').innerHTML=`A(${Math.round(pts.A.x)},${Math.round(pts.A.y)}) — B(${Math.round(pts.B.x)},${Math.round(pts.B.y)}) — C(${Math.round(pts.C.x)},${Math.round(pts.C.y)})`;
+}
+
+// pointer drag
+let dragging=null;
+svg.addEventListener('pointerdown',e=>{const p=getMousePos(e);for(const k of ['A','B','C']){if(Math.hypot(p.x-pts[k].x,p.y-pts[k].y)<12){dragging=k;svg.setPointerCapture(e.pointerId);break;}}});
+svg.addEventListener('pointermove',e=>{if(!dragging) return; const p=getMousePos(e); pts[dragging].x=Math.max(10,Math.min(W-10,p.x)); pts[dragging].y=Math.max(10,Math.min(H-10,p.y)); render();});
+svg.addEventListener('pointerup',e=>{if(dragging){try{svg.releasePointerCapture(e.pointerId);}catch{} dragging=null;}});
+
+function getMousePos(e){const rect=svg.getBoundingClientRect(); return {x:(e.clientX-rect.left)*(W/rect.width),y:(e.clientY-rect.top)*(H/rect.height)};}
+function toggleKey(obj,key,btn){obj[key]=!obj[key]; btn.classList.toggle('active',obj[key]); render();}
+
+// ボタン操作
+document.getElementById('btn-O').addEventListener('click',()=>{for(const k in show) show[k]=false; show.O=true; updateShowButtons(); render();});
+document.getElementById('btn-I').addEventListener('click',()=>{for(const k in show) show[k]=false; show.I=true; updateShowButtons(); render();});
+document.getElementById('btn-G').addEventListener('click',()=>{for(const k in show) show[k]=false; show.G=true; updateShowButtons(); render();});
+document.getElementById('btn-H').addEventListener('click',()=>{for(const k in show) show[k]=false; show.H=true; updateShowButtons(); render();});
+document.getElementById('btn-J').addEventListener('click',()=>{for(const k in show) show[k]=false; show.J=true; updateShowButtons(); render();});
+document.getElementById('btn-all').addEventListener('click',()=>{for(const k in show) show[k]=true; updateShowButtons(); render();});
+function updateShowButtons(){ document.getElementById('btn-O').classList.toggle('active',show.O); document.getElementById('btn-I').classList.toggle('active',show.I); document.getElementById('btn-G').classList.toggle('active',show.G); document.getElementById('btn-H').classList.toggle('active',show.H); document.getElementById('btn-J').classList.toggle('active',show.J); }
+
+document.getElementById('cons-O').addEventListener('click',()=>toggleKey(cons,'O',document.getElementById('cons-O')));
+document.getElementById('cons-I').addEventListener('click',()=>toggleKey(cons,'I',document.getElementById('cons-I')));
+document.getElementById('cons-G').addEventListener('click',()=>toggleKey(cons,'G',document.getElementById('cons-G')));
+document.getElementById('cons-H').addEventListener('click',()=>toggleKey(cons,'H',document.getElementById('cons-H')));
+document.getElementById('cons-J').addEventListener('click',()=>toggleKey(cons,'J',document.getElementById('cons-J')));
+document.getElementById('reset').addEventListener('click',()=>{ pts.A={x:140,y:120}; pts.B={x:540,y:140}; pts.C={x:300,y:420}; for(const k in show) show[k]=false; for(const k in cons) cons[k]=false; document.querySelectorAll('button').forEach(b=>b.classList.remove('active')); render();});
+
+render();
+</script>
+</body>
+</html>
